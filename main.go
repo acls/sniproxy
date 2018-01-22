@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"os/signal"
 	"regexp"
+	"syscall"
 
 	"github.com/acls/sniproxy/config"
 	"github.com/golang/glog"
@@ -77,9 +81,10 @@ func forward(c net.Conn, data []byte) {
 		src = string(addr.IP)
 	}
 
-	dst := cfg.ForwardRules.Get(src, addr.Port)
+	config := cfg.Get()
+	dst := config.ForwardRules.Get(src, addr.Port)
 	if dst == "" {
-		dst = cfg.Default
+		dst = config.Default
 		if dst == "" {
 			glog.Errorf("No dst address for: %s", src)
 			return
@@ -128,21 +133,22 @@ func serve(c net.Conn) {
 	forward(c, buf[:n])
 }
 
-var cfg config.Config
+var (
+	cfgfile string
+	cfg     config.ConfigLocker
+)
 
 func main() {
-	var cfgfile string
 	flag.StringVar(&cfgfile, "c", "config.yaml", "config file")
 	flag.Set("logtostderr", "true")
 	flag.Parse()
 
-	if c, err := config.ReadConfigFile(cfgfile); err != nil {
+	if err := readConfig(); err != nil {
 		glog.Fatal(err)
-	} else {
-		cfg = *c
 	}
 
-	for _, d := range cfg.Listen {
+	//@NOTE: listen ports are not reloaded with the rest of the config
+	for _, d := range cfg.Get().Listen {
 		glog.Infof("listen on :%d", d)
 		l, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", d))
 		if err != nil {
@@ -159,5 +165,70 @@ func main() {
 			}
 		}(l)
 	}
-	select {}
+
+	handleSignals()
+
+	// no longer needed with the signal listening
+	// select {} // don't exit
+}
+
+func handleSignals() {
+	// Ctrl+C twice in a row before exiting
+	// https://stackoverflow.com/a/18158859/467082
+	listenForSignals(func() {
+		ctrlCcount++
+		if ctrlCcount < 2 {
+			glog.Warning("Ctrl+C again to exit")
+			return
+		}
+		glog.Warning("Ctrl+C pressed twice")
+		os.Exit(0)
+	}, os.Interrupt, syscall.SIGTERM)
+
+	// reload config on SIGHUP
+	listenForSignals(reloadConfig, syscall.SIGHUP)
+
+	// reload config when ctrl+d is pressed
+	// https://groups.google.com/forum/#!topic/Golang-Nuts/xeUTvBZsxp0
+	// https://raw.githubusercontent.com/adonovan/gopl.io/master/ch1/dup1/main.go
+listenCtrlD:
+	input := bufio.NewScanner(os.Stdin)
+	for input.Scan() {
+	}
+	reloadConfig()
+	goto listenCtrlD
+}
+
+func listenForSignals(fn func(), sig ...os.Signal) {
+	s := make(chan os.Signal, 1)
+	signal.Notify(s, sig...)
+	go func() {
+		for {
+			<-s
+			fn()
+		}
+	}()
+}
+
+func readConfig() error {
+	c, err := config.ReadConfigFile(cfgfile)
+	if err != nil {
+		return err
+	}
+
+	cfg.Set(c)
+	return nil
+}
+
+var ctrlCcount = 0
+
+func reloadConfig() {
+	// reset Ctrl+C count
+	ctrlCcount = 0
+
+	if err := readConfig(); err != nil {
+		glog.Warning(err)
+		return
+	}
+	glog.Info("Config Reloaded")
 }
