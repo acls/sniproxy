@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 )
 
 func Test_forwardRules_Get(t *testing.T) {
-	c, err := ReadConfigFile("config.sample.yaml")
+	c, err := ReadConfigFile("../config.sample.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

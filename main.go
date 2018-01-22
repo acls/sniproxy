@@ -7,6 +7,7 @@ import (
 	"net"
 	"regexp"
 
+	"github.com/acls/sniproxy/config"
 	"github.com/golang/glog"
 )
 
@@ -127,7 +128,7 @@ func serve(c net.Conn) {
 	forward(c, buf[:n])
 }
 
-var cfg Config
+var cfg config.Config
 
 func main() {
 	var cfgfile string
@@ -135,7 +136,7 @@ func main() {
 	flag.Set("logtostderr", "true")
 	flag.Parse()
 
-	if c, err := ReadConfigFile(cfgfile); err != nil {
+	if c, err := config.ReadConfigFile(cfgfile); err != nil {
 		glog.Fatal(err)
 	} else {
 		cfg = *c
