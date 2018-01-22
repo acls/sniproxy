@@ -2,18 +2,12 @@ package main
 
 import (
 	"fmt"
-	"github.com/go-yaml/yaml"
-	"io/ioutil"
 	"testing"
 )
 
-func TestConf(t *testing.T) {
-	data, err := ioutil.ReadFile("config.sample.yaml")
+func Test_forwardRules_Get(t *testing.T) {
+	c, err := ReadConfigFile("config.sample.yaml")
 	if err != nil {
-		t.Fatal(err)
-	}
-	var c conf
-	if err := yaml.Unmarshal(data, &c); err != nil {
 		t.Fatal(err)
 	}
 	fmt.Printf("%+v\n", c)
@@ -21,15 +15,33 @@ func TestConf(t *testing.T) {
 		"www.example.com": "127.0.0.1:8443",
 		"b.example.com":   "127.0.0.1:8541",
 	}
-	r := forwardRules(c.ForwardRules)
+	fr := forwardRules(c.ForwardRules)
 	for k, v := range testdata {
-		s := r.Get(k)
+		s, _ := fr[k]
 		if s != v {
 			t.Errorf("expected: %s, got: %s", v, s)
 		}
 	}
 
-	if r.GetN("a.com", 9999) != "a.com:443" {
-		t.Errorf("expected a.com:9999, got %s", r.GetN("a.com", 9999))
+	type args struct {
+		uri  string
+		port int
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{"1", args{"www.example.com", 80}, "127.0.0.1:8080"},
+		{"2", args{"www.example.com", 443}, "127.0.0.1:8443"},
+		{"3", args{"www.example.com", 9999}, "127.0.0.1:8443"},
+		{"4", args{"a.com", 9999}, "a.com:443"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := fr.Get(tt.args.uri, tt.args.port); got != tt.want {
+				t.Errorf("forwardRules.Get() got %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

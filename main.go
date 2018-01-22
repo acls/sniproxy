@@ -1,28 +1,30 @@
 package main
 
 import (
-	"fmt"
-	"github.com/go-yaml/yaml"
-	"github.com/golang/glog"
-	"io"
-	"io/ioutil"
-	//"crypto/tls"
 	"flag"
-	//"log"
+	"fmt"
+	"io"
 	"net"
+	"regexp"
+
+	"github.com/golang/glog"
 )
+
+func getServerName(buf []byte) string {
+	// check if tls record type
+	if recordType(buf[0]) == recordTypeHandshake {
+		// tls
+		return getSNIServerName(buf)
+	}
+	// not tls
+	return getHost(buf)
+}
 
 func getSNIServerName(buf []byte) string {
 	n := len(buf)
 	if n < 5 {
-		glog.Error("not tls handshake")
-		return ""
-	}
-
-	// tls record type
-	if recordType(buf[0]) != recordTypeHandshake {
-		glog.Error("not tls")
-		return ""
+		glog.Info("not tls handshake")
+		return getHost(buf)
 	}
 
 	// tls major version
@@ -47,7 +49,7 @@ func getSNIServerName(buf []byte) string {
 	msg := &clientHelloMsg{}
 
 	// client hello message not include tls header, 5 bytes
-	ret := msg.unmarshal(buf[5:n])
+	ret := msg.unmarshal(buf[5:])
 	if !ret {
 		glog.Error("parse hello message return false")
 		return ""
@@ -55,7 +57,35 @@ func getSNIServerName(buf []byte) string {
 	return msg.serverName
 }
 
-func forward(c net.Conn, data []byte, dst string) {
+var hostRegx = regexp.MustCompile("\r\nHost: (.*)\r\n")
+
+func getHost(buf []byte) string {
+	matches := hostRegx.FindStringSubmatch(string(buf))
+	if len(matches) < 1 {
+		glog.Error("failed to find host")
+		return ""
+	}
+	return matches[1]
+}
+
+func forward(c net.Conn, data []byte) {
+	addr := c.LocalAddr().(*net.TCPAddr)
+
+	src := getServerName(data)
+	if src == "" {
+		src = string(addr.IP)
+	}
+
+	dst := cfg.ForwardRules.Get(src, addr.Port)
+	if dst == "" {
+		dst = cfg.Default
+		if dst == "" {
+			glog.Errorf("No dst address for: %s", src)
+			return
+		}
+	}
+	glog.Infof("Forward: %s -> %s", src, dst)
+
 	c1, err := net.Dial("tcp", dst)
 	if err != nil {
 		glog.Error(err)
@@ -84,16 +114,6 @@ func forward(c net.Conn, data []byte, dst string) {
 	<-ch
 }
 
-func getDST(c net.Conn, name string) string {
-	addr := c.LocalAddr().(*net.TCPAddr)
-	dst := cfg.ForwardRules.GetN(name, addr.Port)
-	return dst
-}
-
-func getDefaultDST() string {
-	return cfg.Default
-}
-
 func serve(c net.Conn) {
 	defer c.Close()
 
@@ -103,19 +123,11 @@ func serve(c net.Conn) {
 		glog.Error(err)
 		return
 	}
-	servername := getSNIServerName(buf[:n])
-	if servername == "" {
-		forward(c, buf[:n], getDefaultDST())
-		return
-	}
-	dst := getDST(c, servername)
-	if dst == "" {
-		dst = getDefaultDST()
-	}
-	forward(c, buf[:n], dst)
+
+	forward(c, buf[:n])
 }
 
-var cfg conf
+var cfg Config
 
 func main() {
 	var cfgfile string
@@ -123,17 +135,15 @@ func main() {
 	flag.Set("logtostderr", "true")
 	flag.Parse()
 
-	data, err := ioutil.ReadFile(cfgfile)
-	if err != nil {
+	if c, err := ReadConfigFile(cfgfile); err != nil {
 		glog.Fatal(err)
-	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		glog.Fatal(err)
+	} else {
+		cfg = *c
 	}
 
 	for _, d := range cfg.Listen {
 		glog.Infof("listen on :%d", d)
-		l, err := net.Listen("tcp", fmt.Sprintf(":%d", d))
+		l, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", d))
 		if err != nil {
 			glog.Fatal(err)
 		}
