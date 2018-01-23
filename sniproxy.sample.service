@@ -1,0 +1,14 @@
+[Unit]
+Description=SNI pass-through proxy
+After=network.target
+Documentation=https://github.com/acls/sniproxy
+
+[Service]
+Type=simple
+ExecStart=/home/acls/bin/sniproxy -c /home/acls/sniproxy-config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

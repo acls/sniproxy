@@ -78,7 +78,7 @@ func forward(c net.Conn, data []byte) {
 
 	src := getServerName(data)
 	if src == "" {
-		src = string(addr.IP)
+		src = addr.IP.String()
 	}
 
 	config := cfg.Get()
@@ -86,11 +86,11 @@ func forward(c net.Conn, data []byte) {
 	if dst == "" {
 		dst = config.Default
 		if dst == "" {
-			glog.Errorf("No dst address for: %s", src)
+			glog.Errorf("No dst address for ip:%s, src:%s", addr.IP.String(), src)
 			return
 		}
 	}
-	glog.Infof("Forward: %s -> %s", src, dst)
+	glog.Infof("Forward: %s:%d -> %s", src, addr.Port, dst)
 
 	c1, err := net.Dial("tcp", dst)
 	if err != nil {
@@ -108,12 +108,18 @@ func forward(c net.Conn, data []byte) {
 	ch := make(chan struct{}, 2)
 
 	go func() {
-		io.Copy(c1, c)
+		_, err := io.Copy(c1, c)
+		if err != nil {
+			glog.Error(err)
+		}
 		ch <- struct{}{}
 	}()
 
 	go func() {
-		io.Copy(c, c1)
+		_, err := io.Copy(c, c1)
+		if err != nil {
+			glog.Error(err)
+		}
 		ch <- struct{}{}
 	}()
 
@@ -139,6 +145,8 @@ var (
 )
 
 func main() {
+	var ctrlD bool
+	flag.BoolVar(&ctrlD, "d", false, "handle ctrl+d")
 	flag.StringVar(&cfgfile, "c", "config.yaml", "config file")
 	flag.Set("logtostderr", "true")
 	flag.Parse()
@@ -166,16 +174,20 @@ func main() {
 		}(l)
 	}
 
-	handleSignals()
+	handleSignals(ctrlD)
 
-	// no longer needed with the signal listening
-	// select {} // don't exit
+	select {} // don't exit
 }
 
-func handleSignals() {
+func handleSignals(ctrlD bool) {
 	// Ctrl+C twice in a row before exiting
 	// https://stackoverflow.com/a/18158859/467082
 	listenForSignals(func() {
+		// exit on first ctrl+c if ctrl+d isn't an option
+		if !ctrlD {
+			os.Exit(0)
+		}
+
 		ctrlCcount++
 		if ctrlCcount < 2 {
 			glog.Warning("Ctrl+C again to exit")
@@ -188,15 +200,19 @@ func handleSignals() {
 	// reload config on SIGHUP
 	listenForSignals(reloadConfig, syscall.SIGHUP)
 
-	// reload config when ctrl+d is pressed
-	// https://groups.google.com/forum/#!topic/Golang-Nuts/xeUTvBZsxp0
-	// https://raw.githubusercontent.com/adonovan/gopl.io/master/ch1/dup1/main.go
-listenCtrlD:
-	input := bufio.NewScanner(os.Stdin)
-	for input.Scan() {
+	// Bad things happen if running as a systemd service and listening for ctrl+d.
+	// e.g.: high cpu usage because of constant config reloading.
+	if ctrlD {
+		// reload config when ctrl+d is pressed
+		// https://groups.google.com/forum/#!topic/Golang-Nuts/xeUTvBZsxp0
+		// https://raw.githubusercontent.com/adonovan/gopl.io/master/ch1/dup1/main.go
+	listenCtrlD:
+		input := bufio.NewScanner(os.Stdin)
+		for input.Scan() {
+		}
+		reloadConfig()
+		goto listenCtrlD
 	}
-	reloadConfig()
-	goto listenCtrlD
 }
 
 func listenForSignals(fn func(), sig ...os.Signal) {

@@ -15,7 +15,7 @@ Routes HTTP and TLS connections:
 go get github.com/acls/sniproxy
 ```
 
-##  config
+## Copy config
 ```bash
 cp $GOPATH/src/github.com/acls/sniproxy/config.sample.yaml config.yaml
 vim config.yaml
@@ -23,7 +23,7 @@ vim config.yaml
 
 ## Run
 ```bash
-$GOPATH/bin/sniproxy -c config.yaml
+$GOPATH/bin/sniproxy -d -c config.yaml
 ```
 
 # Example config
@@ -47,6 +47,36 @@ forward_rules:
   "*:9999": "*:443"
 ```
 
+# As a Systemd Service
+
+## Copy service file
+NOTE: change ExecStart paths to match your paths, since the paths must be absolute. My $GOPATH is my home directory.
+
+```bash
+cp $GOPATH/src/github.com/acls/sniproxy/sniproxy.sample.service /etc/systemd/system/sniproxy.service
+vim /etc/systemd/system/sniproxy.service
+```
+
+## Start service
+```bash
+systemctl start sniproxy.service
+```
+
+## View logs
+```bash
+journalctl -u sniproxy.service     # all logs
+journalctl -u sniproxy.service -f  # follow logs
+```
+
+## Set to automatically run on boot
+```bash
+systemctl enable sniproxy.service
+```
+
+## Reload service without restarting after making changes to config
+```bash
+systemctl reload sniproxy.service
+```
 
 ---
 Based on https://github.com/fangdingjun/sniproxy
