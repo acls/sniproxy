@@ -74,6 +74,7 @@ func getHost(buf []byte) string {
 }
 
 func forward(c net.Conn, data []byte) {
+	remote := c.RemoteAddr().String()
 	addr := c.LocalAddr().(*net.TCPAddr)
 
 	src := getServerName(data)
@@ -86,11 +87,11 @@ func forward(c net.Conn, data []byte) {
 	if dst == "" {
 		dst = config.Default
 		if dst == "" {
-			glog.Errorf("No dst address for ip:%s, src:%s", addr.IP.String(), src)
+			glog.Errorf("No dst address from remote:%s for ip:%s, src:%s", remote, addr.IP.String(), src)
 			return
 		}
 	}
-	glog.Infof("Forward: %s:%d -> %s", src, addr.Port, dst)
+	glog.Infof("Forward from remote:%s for %s:%d -> %s", remote, src, addr.Port, dst)
 
 	c1, err := net.Dial("tcp", dst)
 	if err != nil {
